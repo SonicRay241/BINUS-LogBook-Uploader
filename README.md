@@ -21,15 +21,14 @@ Activity Enrichment system from a CSV file.
 
 ## Installation (Firefox)
 
-### Temporary (for testing)
+### Temporary
 1. Open Firefox → `about:debugging#/runtime/this-firefox`
-2. Click **"Load Temporary Add-on\u2026"**
+2. Click **"Load Temporary Add-on"**
 3. Select `extension/manifest.json`
 4. Active until you restart Firefox
 
-### Permanent (optional)
-1. Zip the `extension/` folder contents into a `.xpi` file
-2. Firefox → `about:addons` → gear icon → **"Install Add-on From File\u2026"**
+### Permanent
+2. Firefox → `about:addons` → gear icon → **"Install Add-on From File"**
 3. Select the `.xpi` file
 
 ## CSV Format

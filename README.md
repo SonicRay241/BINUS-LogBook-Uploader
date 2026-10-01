@@ -7,7 +7,7 @@ Activity Enrichment system from a CSV file.
 
 1. Go to your Learning Plan page (`/LearningPlan/StudentIndex`)
 2. Click the **📋 Upload CSV** button (appears bottom-right)
-3. Select your `data.csv` file
+3. Select your `data.csv` file ([example link](https://docs.google.com/spreadsheets/d/1fTe0RsihOgQycQUhUCN9QCk-jai4QdcJB7ETbJTe9iU/edit?usp=sharing))
 4. The extension calls the same API endpoints the website uses
 5. Progress is shown in the floating panel
 6. When done, **manually click the SUBMIT button** to send for approval
@@ -44,19 +44,7 @@ Required columns (header names are flexible):
 | Activity    | `Scraping & Dashboard`       |
 | Description | `- Jalanin Scraper`          |
 
-Your existing `data.csv` already has the correct format.
-
-## Project Structure
-
-```
-binus-logbook-uploader/
-\u251c\u2500\u2500 extension/
-\u2502   \u251c\u2500\u2500 manifest.json   \u2190 Firefox add-on manifest
-\u2502   \u251c\u2500\u2500 content.js      \u2190 Main logic (injected into page)
-\u2502   \u2514\u2500\u2500 icon.svg            \u2190 Toolbar icon
-\u251c\u2500\u2500 data.csv            \u2190 Your logbook data
-\u2514\u2500\u2500 README.md           \u2190 This file
-```
+Here's an [example file](https://docs.google.com/spreadsheets/d/1fTe0RsihOgQycQUhUCN9QCk-jai4QdcJB7ETbJTe9iU/edit?usp=sharing).
 
 ## Notes
 

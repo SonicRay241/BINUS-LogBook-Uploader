@@ -47,7 +47,41 @@ Required columns (header names are flexible):
 | Activity    | `Scraping & Dashboard`       |
 | Description | `- Jalanin Scraper`          |
 
+A row with an **empty Activity** counts as an explicit **OFF** day.
 Here's an [example file](https://docs.google.com/spreadsheets/d/1fTe0RsihOgQycQUhUCN9QCk-jai4QdcJB7ETbJTe9iU/edit?usp=sharing).
+
+## YAML Format
+
+Alternatively, pick a `.yaml` / `.yml` file. Dates use `YYYY-MM-DD`; `defaults` apply
+unless an entry overrides them; `activity: null` marks a day OFF:
+
+```yaml
+defaults:
+  clock-in: '9:00 AM'
+  clock-out: '6:00 PM'
+logbook:
+  - date: 2026-10-05
+    activity: 'Refactor project'
+    description: 'Starting out the day with ....'
+  - date: 2026-10-06
+    activity: 'Test refactor'
+    description: 'Doing tests on ....'
+    clock-in: '9:00 AM'
+    clock-out: '6:00 PM'
+  - date: 2026-10-07
+    activity: null # Means "OFF"
+```
+
+A blank Activity in CSV and `activity: null` in YAML mean the same thing.
+
+### OFF / gap rules
+
+- Explicit OFF days are filled as OFF.
+- Saturdays are always OFF; Sundays are untouched.
+- **Undefined dates strictly *between* two consecutive dates in your file default
+  to OFF** (e.g. records jump from 10-07 to 10-09 → 10-08 becomes OFF).
+- Weekdays before the first/after the last record — a mid-month partial write —
+  are left untouched unless explicitly listed.
 
 ## Notes
 

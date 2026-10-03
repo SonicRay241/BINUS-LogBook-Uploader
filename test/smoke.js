@@ -32,8 +32,8 @@ check('parseCSVRows', api.parseCSVRows([
   ['Wed, 2 Sep 2026', '9:00 AM', '  ', 'Dashboard', ''],
   ['', '', '', '', ''],
 ]), [
-  { dateStr: 'Tue, 1 Sep 2026', clockIn: '8:26 AM', clockOut: '5:31 PM', activity: 'Scraping', description: '- run' },
-  { dateStr: 'Wed, 2 Sep 2026', clockIn: '9:00 AM', clockOut: '', activity: 'Dashboard', description: '' },
+  { dateStr: 'Tue, 1 Sep 2026', clockIn: '8:26 AM', clockOut: '5:31 PM', activity: 'Scraping', description: '- run', explicitOff: false},
+  { dateStr: 'Wed, 2 Sep 2026', clockIn: '9:00 AM', clockOut: '', activity: 'Dashboard', description: '', explicitOff: false },
 ]);
 
 // ── parseCSV (raw text: quoting, CRLF) ──
@@ -42,7 +42,7 @@ const text = 'date,activity\r\n"Tue, 1 Sep 2026","Scraping, dashboard"\r\n';
 const parsed = w2.__LBU.parseCSV(text);
 check('quoted rows split on commas inside quotes', w2.__lbuCSVRows, [['date', 'activity'], ['Tue, 1 Sep 2026', 'Scraping, dashboard']]);
 check('parseCSV entries', parsed, [
-  { dateStr: 'Tue, 1 Sep 2026', clockIn: '', clockOut: '', activity: 'Scraping, dashboard', description: '' },
+  { dateStr: 'Tue, 1 Sep 2026', clockIn: '', clockOut: '', activity: 'Scraping, dashboard', description: '', explicitOff: false },
 ]);
 
 // ── date helpers ──
@@ -56,6 +56,108 @@ check('getDayOfWeek Sun', api.getDayOfWeek('2026-09-06'), 0);
 check('padClockTime pads hour', api.padClockTime('8:26 AM'), '08:26 AM');
 check('padClockTime OFF passthrough', api.padClockTime('OFF'), 'OFF');
 check('padClockTime junk passthrough', api.padClockTime('x'), 'x');
+
+// ── YAML subset parser ──
+const doc = api.parseYAML([
+  "defaults:",
+  "  clock-in: '9:00 AM'",
+  "  clock-out: '6:00 AM' # office hours",
+  "logbook:",
+  "  - date: 2026-10-05",
+  "    activity: 'Refactor project'",
+  "    description: 'Day shift'",
+  "  - date: 2026-10-06",
+  "    activity: null # OFF",
+  "    clock-in: '8:00 AM'",
+  "  - date: 2026-10-07",
+  "    activity: Test",
+  "    clock-in: \"10:30 PM\"",
+].join('\n'));
+check('yaml top-level keys', Object.keys(doc), ['defaults', 'logbook']);
+check('yaml defaults', doc.defaults, { 'clock-in': '9:00 AM', 'clock-out': '6:00 AM' });
+check('yaml seq len', doc.logbook.length, 3);
+check('yaml item0', doc.logbook[0], { date: '2026-10-05', activity: 'Refactor project', description: 'Day shift' });
+check('yaml null activity', doc.logbook[1].activity, null);
+check('yaml dquoted scalar', doc.logbook[2]['clock-in'], '10:30 PM');
+check('yaml comment strip quoted hash', api.parseYAML("a: 'x # y'\nb: 2").a, 'x # y');
+check('yaml int value', api.parseYAML('a: 42').a, 42);
+check('yaml inline seq item map', api.parseYAML('logbook:\n  - date: 2026-10-05\n    activity: A').logbook,
+  [{ date: '2026-10-05', activity: 'A' }]);
+check('yaml number unquoted date kept as string', api.parseYAML('a: 2026-10-05').a, '2026-10-05');
+
+// ── yamlToEntries normalization ──
+const ye = api.yamlToEntries([
+  'defaults:',
+  "  clock-in: '9:00 AM'",
+  "  clock-out: '6:00 AM'",
+  'logbook:',
+  '  - date: 2026-10-05',
+  "    activity: 'Refactor project'",
+  "    description: 'Starting out the day'",
+  '  - date: 2026-10-06',
+  '    activity: null',
+  '  - date: 2026-10-07',
+  "    activity: 'Test refactor'",
+  "    clock-in: '10:00 AM'",
+].join('\n'));
+check('yamlToEntries default times applied', [ye[0].clockIn, ye[0].clockOut], ['9:00 AM', '6:00 AM']);
+check('yamlToEntries explicit OFF', ye[1], { dateStr: '2026-10-06', clockIn: 'OFF', clockOut: 'OFF', activity: '', description: '', explicitOff: true });
+check('yamlToEntries per-item override', [ye[2].clockIn, ye[2].clockOut], ['10:00 AM', '6:00 AM']);
+check('yamlToEntries empty logbook', api.yamlToEntries('logbook: []'), []);
+let threw = false;
+try {
+  api.planUploads([], api.yamlToEntries('logbook:\n  - date: 2026-10-05\n    activity: A\n  - date: 2026-10-05\n    activity: B'));
+} catch (e) { threw = /Duplicate/.test(e.message); }
+check('planner duplicate date rejected', threw, true);
+
+// ── planUploads (pure planner) ──
+// Oct 2026: 01 Thu, 02 Fri, 03 Sat, 04 Sun, 05 Mon, 06 Tue, 07 Wed,
+// 08 Thu, 09 Fri, 10 Sat, 11 Sun, 12 Mon … 15 Thu, 16 Fri, 17 Sat, 18 Sun, 19 Mon
+const oct = (d) => `2026-10-${String(d).padStart(2, '0')}`;
+function row(d) { return { id: 'e' + d, date: oct(d), acceptanceID: 0 }; }
+
+const entries = api.yamlToEntries([
+  'logbook:',
+  '  - date: 2026-10-01', // Thu
+  '    activity: Work A',
+  '  - date: 2026-10-02', // Fri
+  '    activity: Work B',
+  '  - date: 2026-10-06', // Tue
+  '    activity: Work C',
+  '  - date: 2026-10-07', // Wed, explicit OFF → gap 10-08 becomes OFF
+  '    activity: null',
+  '  - date: 2026-10-15', // Thu
+  '    activity: Work D',
+  '  # 09 Fri / 16 Fri / 19+ weekdays after the last record: untouched (skip)',
+].join('\n'));
+const plan = api.planUploads(
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 19].map(row), entries);
+const acts = {};
+plan.forEach(p => { acts[p.dateKey] = p.action; });
+
+check('plan fill', [acts['2026-10-01'], acts['2026-10-02']], ['fill', 'fill']);
+check('plan saturday off', acts['2026-10-03'], 'off');
+check('plan sunday skip', acts['2026-10-04'], 'skip');
+check('plan unmatched weekday inside block becomes gap OFF (10-05 between records)', acts['2026-10-05'], 'off');
+check('plan fill', acts['2026-10-06'], 'fill');
+check('plan explicit OFF honored', acts['2026-10-07'], 'off');
+check('plan gap OFF between records', acts['2026-10-08'], 'off');
+check('plan friday inside block becomes gap OFF (10-09 between records)', acts['2026-10-09'], 'off');
+check('plan saturday off', acts['2026-10-10'], 'off');
+check('plan fill after gap', acts['2026-10-15'], 'fill');
+check('plan trailing weekday skip', acts['2026-10-16'], 'skip');
+check('plan trailing weekday skip', acts['2026-10-19'], 'skip');
+
+// acceptance-ID skip still wins
+const aPlan = api.planUploads([{ id: 'a', date: oct(1), acceptanceID: 3 }], entries);
+check('plan accepted skip', aPlan[0].action, 'skip');
+
+// ── CSV path: blank activity row = explicit OFF, gap rule identical ──
+const csvBlanks = api.parseCSV('Date,Clock In,Clock Out,Activity,Description\n"Tue, 6 Oct 2026",9:00 AM,5:00 PM,Work,\n"Wed, 7 Oct 2026",,,,');
+check('csv blank row explicit OFF', [csvBlanks[0].explicitOff, csvBlanks[1].explicitOff], [false, true]);
+const csvPlan = api.planUploads([row(6), row(7), row(8)], csvBlanks);
+check('csv plan fill + explicit OFF + tail skip (not between records)',
+  [csvPlan[0].action, csvPlan[1].action, csvPlan[2].action], ['fill', 'off', 'skip']);
 
 process.exitCode = failed ? 1 : 0;
 console.log(failed ? failed + ' FAILED' : 'all passed');

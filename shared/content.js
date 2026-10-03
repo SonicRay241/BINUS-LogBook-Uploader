@@ -82,14 +82,21 @@
         }
         var input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.csv,.tsv';
+        input.accept = '.csv,.tsv,.yaml,.yml';
         input.addEventListener('change', async function(e) {
             var file = e.target.files[0];
             if (!file) return;
             var text = await file.text();
-            var entries = parseCSV(text);
+            var isYaml = /\.(yaml|yml)$/i.test(file.name);
+            var entries;
+            try {
+                entries = isYaml ? yamlToEntries(text) : parseCSV(text);
+            } catch (perr) {
+                setStatus('Error: ' + (perr.message || perr), 'error');
+                return;
+            }
             if (entries.length === 0) {
-                setStatus('No valid entries found in CSV.', 'error');
+                setStatus('No valid entries found in ' + (isYaml ? 'YAML' : 'CSV') + '.', 'error');
                 return;
             }
             await uploadEntries(entries);
@@ -116,12 +123,16 @@
             var f = rows[r];
             var ds = (f[ci.date] || '').trim();
             if (!ds) continue;
+            var act = ci.activity >= 0 ? (f[ci.activity] || '').trim() : '';
+            var desc = ci.desc >= 0 ? (f[ci.desc] || '').trim() : '';
+            var isOff = act === '' || act.toUpperCase() === 'OFF';
             out.push({
                 dateStr: ds,
-                clockIn: ci.clockIn >= 0 ? (f[ci.clockIn] || '').trim() : '',
-                clockOut: ci.clockOut >= 0 ? (f[ci.clockOut] || '').trim() : '',
-                activity: ci.activity >= 0 ? (f[ci.activity] || '').trim() : '',
-                description: ci.desc >= 0 ? (f[ci.desc] || '').trim() : '',
+                clockIn: isOff ? 'OFF' : (ci.clockIn >= 0 ? (f[ci.clockIn] || '').trim() : ''),
+                clockOut: isOff ? 'OFF' : (ci.clockOut >= 0 ? (f[ci.clockOut] || '').trim() : ''),
+                activity: act,
+                description: desc,
+                explicitOff: isOff,
             });
         }
         return out;
@@ -147,6 +158,144 @@
         return parseCSVRows(rows);
     }
 
+    // ─── Minimal YAML Parser ────────────────────────────────────
+    // ponytail: subset parser — block maps/sequences, plain/quoted scalars,
+    // comments; no anchors, block scalars (| >), or inline flow ({..} [..]
+    // values degrade to strings). Covers the logbook file format only.
+    function stripComment(s) {
+        var q = null;
+        for (var i = 0; i < s.length; i++) {
+            var c = s[i];
+            if (q) { if (c === q) q = null; continue; }
+            if (c === '"' || c === "'") { q = c; continue; }
+            if (c === '#' && (i === 0 || s[i - 1] === ' ')) return s.slice(0, i).trim();
+        }
+        return s.trim();
+    }
+
+    function scalarValue(s) {
+        s = s.trim();
+        if (!s || s === '~' || /^(null|Null|NULL)$/.test(s)) return null;
+        if (s === '[]') return [];
+        if (/^(true|True|TRUE)$/.test(s)) return true;
+        if (/^(false|False|FALSE)$/.test(s)) return false;
+        if (/^[-+]?\d+(\.\d+)?$/.test(s)) return Number(s);
+        if (s[0] === "'" && s[s.length - 1] === "'") return s.slice(1, -1).replace(/''/g, "'");
+        if (s[0] === '"' && s[s.length - 1] === '"') return s.slice(1, -1);
+        return s;
+    }
+
+    function splitKey(s) {
+        var q = null;
+        for (var i = 0; i < s.length; i++) {
+            var c = s[i];
+            if (q) { if (c === q) q = null; continue; }
+            if (c === '"' || c === "'") { q = c; continue; }
+            if (c === ':') {
+                var after = s.slice(i + 1);
+                if (after === '' || after.charAt(0) === ' ')
+                    return { key: String(scalarValue(s.slice(0, i))), rest: after.trim() };
+            }
+        }
+        return null;
+    }
+
+    function parseYAML(text) {
+        var lines = [];
+        var rawLines = String(text).split(/\r?\n/);
+        for (var li = 0; li < rawLines.length; li++) {
+            var rawLine = rawLines[li].replace(/\t/g, '    ');
+            var indent = rawLine.length - rawLine.replace(/^ +/, '').length;
+            var txt = stripComment(rawLine);
+            if (!txt || txt === '---' || txt === '...') continue;
+            lines.push({ indent: indent, text: txt });
+        }
+        var p = 0;
+        function fail(msg) { throw new Error('YAML parse: ' + msg); }
+
+        function parseNode(indent) {
+            var l = p < lines.length ? lines[p] : null;
+            if (!l || l.indent < indent) return null;
+            if (l.indent > indent) fail('unexpected indent: "' + l.text + '"');
+            if (l.text === '-' || l.text.slice(0, 2) === '- ') return parseSeq(indent);
+            if (splitKey(l.text)) return parseMap(indent);
+            p++;
+            return scalarValue(l.text);
+        }
+
+        function parseSeq(indent) {
+            var arr = [];
+            while (true) {
+                var l = p < lines.length ? lines[p] : null;
+                if (!l || l.indent < indent) break;
+                if (l.indent > indent) fail('bad indent in sequence: "' + l.text + '"');
+                var t = l.text;
+                if (t !== '-' && t.slice(0, 2) !== '- ') break;
+                var rest = (t === '-' ? '' : t.slice(1)).replace(/^( +)/, '');
+                p++;
+                if (rest) {
+                    // `- key: v` → item is a map whose keys align right after the dash
+                    var itemIndent = indent + (t.length - rest.length);
+                    lines.splice(p, 0, { indent: itemIndent, text: rest });
+                    arr.push(parseNode(itemIndent));
+                } else {
+                    var n = p < lines.length ? lines[p] : null;
+                    arr.push(n && n.indent > indent ? parseNode(n.indent) : null);
+                }
+            }
+            return arr;
+        }
+
+        function parseMap(indent) {
+            var obj = {};
+            while (true) {
+                var l = p < lines.length ? lines[p] : null;
+                if (!l || l.indent < indent) break;
+                if (l.indent > indent) fail('bad indent in mapping: "' + l.text + '"');
+                var kv = splitKey(l.text);
+                if (!kv) fail('expected "key: value": "' + l.text + '"');
+                p++;
+                if (kv.rest) { obj[kv.key] = scalarValue(kv.rest); continue; }
+                var n = p < lines.length ? lines[p] : null;
+                obj[kv.key] = n && n.indent > indent ? parseNode(n.indent) : null;
+            }
+            return obj;
+        }
+
+        if (!lines.length) return null;
+        return parseNode(lines[0].indent);
+    }
+
+    // ─── YAML → normalized entries ──────────────────────────────
+    // Same shape the CSV parser emits, plus explicitOff. Dates are
+    // YYYY-MM-DD (CSV-style "Tue, 1 Sep 2026" still accepted).
+    function yamlToEntries(text) {
+        var doc = parseYAML(text);
+        if (!doc || typeof doc !== 'object' || Array.isArray(doc))
+            throw new Error('YAML: expected a top-level mapping');
+        var seq = doc.logbook == null ? [] : doc.logbook;
+        if (!Array.isArray(seq)) throw new Error('YAML: "logbook" must be a list');
+        var dft = (doc.defaults && typeof doc.defaults === 'object') ? doc.defaults : {};
+        var dIn = dft['clock-in'] != null ? String(dft['clock-in']).trim() : '';
+        var dOut = dft['clock-out'] != null ? String(dft['clock-out']).trim() : '';
+        var out = [];
+        for (var i = 0; i < seq.length; i++) {
+            var it = seq[i];
+            if (!it || typeof it !== 'object') continue;
+            var act = it.activity == null ? '' : String(it.activity).trim();
+            var isOff = act === '' || act.toUpperCase() === 'OFF';
+            out.push({
+                dateStr: it.date == null ? '' : String(it.date).trim(),
+                clockIn: isOff ? 'OFF' : (it['clock-in'] != null ? String(it['clock-in']).trim() : dIn),
+                clockOut: isOff ? 'OFF' : (it['clock-out'] != null ? String(it['clock-out']).trim() : dOut),
+                activity: act,
+                description: it.description == null ? '' : String(it.description).trim(),
+                explicitOff: isOff,
+            });
+        }
+        return out;
+    }
+
     // ─── Date Helpers ───────────────────────────────────────────
     var MONTH_MAP = {
         Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
@@ -157,6 +306,17 @@
         var m = str.match(/(\d{1,2})\s+(\w{3})\s+(\d{4})/);
         if (!m) return null;
         return m[3] + '-' + (MONTH_MAP[m[2]] || '??') + '-' + m[1].padStart(2, '0');
+    }
+
+    // Entry dates: YAML YYYY-MM-DD (quotes stripped) or CSV "Tue, 1 Sep 2026"
+    function entryDateToKey(dateStr) {
+        var s = String(dateStr).trim().replace(/^['"]+|['"]+$/g, '');
+        var m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) {
+            var mo = +m[2], day = +m[3];
+            return (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) ? s : null;
+        }
+        return csvDateToKey(s);
     }
 
     function apiDateToKey(dateVal) {
@@ -255,54 +415,31 @@
                     'dow=', getDayOfWeek(apiEntries[d].date));
             }
 
-            // Build CSV lookup
-            var csvByKey = {};
-            console.log('[LBU] CSV entries:');
-            for (var i = 0; i < csvEntries.length; i++) {
-                var key = csvDateToKey(csvEntries[i].dateStr);
-                console.log('  "' + csvEntries[i].dateStr + '" => "' + key + '"');
-                if (key) csvByKey[key] = csvEntries[i];
-            }
-
+            var plan = planUploads(apiEntries, csvEntries);
             var filled = 0, markedOff = 0, skipped = 0, errors = 0;
             showProgressBar(true);
-
-            for (var i = 0; i < apiEntries.length; i++) {
-                var row = apiEntries[i];
-                var dateKey = apiDateToKey(row.date);
-                if (!dateKey) { skipped++; updateProgressBar(filled + markedOff + skipped, total); continue; }
-                var dow = getDayOfWeek(row.date);
-
-                if (row.acceptanceID === 1 || row.acceptanceID === 3 || row.acceptanceID === 4) {
-                    skipped++; updateProgressBar(filled + markedOff + skipped, total); continue;
-                }
-                if (dow === 0) {
-                    skipped++; updateProgressBar(filled + markedOff + skipped, total); continue;
-                }
-                if (dow === 6) {
-                    console.log('[LBU] SAT ' + dateKey + ' => OFF');
-                    var ok = await rawSaveEntry(headerID, row.id, row.date, 'OFF', 'OFF', 'OFF', 'OFF', flagjuly);
+            for (var i = 0; i < plan.length; i++) {
+                var p = plan[i];
+                var ok;
+                if (p.action === 'off') {
+                    console.log('[LBU] OFF ' + p.dateKey + ' (' + p.reason + ')');
+                    ok = await rawSaveEntry(headerID, p.id, p.date, 'OFF', 'OFF', 'OFF', 'OFF', flagjuly);
                     if (ok) markedOff++; else errors++;
-                    updateProgressBar(filled + markedOff + skipped + errors, total);
-                    continue;
-                }
-
-                var csvRow = csvByKey[dateKey];
-                if (csvRow) {
-                    console.log('[LBU] FILL ' + dateKey + ' => ' + csvRow.activity);
-                    var ok = await rawSaveEntry(headerID, row.id, row.date,
-                        padClockTime(csvRow.clockIn) || 'OFF', padClockTime(csvRow.clockOut) || 'OFF',
-                        csvRow.activity || '', csvRow.description || '', flagjuly);
+                } else if (p.action === 'fill') {
+                    console.log('[LBU] FILL ' + p.dateKey + ' => ' + p.activity);
+                    ok = await rawSaveEntry(headerID, p.id, p.date,
+                        padClockTime(p.clockIn) || 'OFF', padClockTime(p.clockOut) || 'OFF',
+                        p.activity, p.description, flagjuly);
                     if (ok) filled++; else errors++;
                 } else {
-                    console.log('[LBU] SKIP ' + dateKey + ' (no CSV match)');
+                    console.log('[LBU] SKIP ' + p.dateKey + ' (' + p.reason + ')');
                     skipped++;
                 }
                 updateProgressBar(filled + markedOff + skipped + errors, total);
             }
 
             var msg = 'Done!<br>' +
-                filled + ' filled, ' + markedOff + ' OFF (Sat), ' +
+                filled + ' filled, ' + markedOff + ' OFF (Sat or gap), ' +
                 skipped + ' skipped' + (errors ? ', ' + errors + ' errors' : '');
             setStatus(msg, errors ? 'error' : 'success');
         } catch (err) {
@@ -311,6 +448,74 @@
             isRunning = false;
             toggleUI(false);
         }
+    }
+
+    // ─── Upload planner (pure, testable) ─────────────────────────
+    // Decides per API row: off / fill / skip. No DOM, no fetch.
+    // Rules:
+    //   acceptanceID 1/3/4 → skip; Sunday → skip; Saturday → OFF.
+    //   explicit OFF entry → OFF. CSV: blank/empty row → explicit OFF.
+    //   Explicit OFF weekdays gapped by exactly 1 weekday → OFF.
+    //   Unmatched weekdays otherwise → skip.
+    function planUploads(apiEntries, csvEntries) {
+        var byKey = {};
+        for (var i = 0; i < csvEntries.length; i++) {
+            if (csvEntries[i].explicitOff) continue;
+            var k0 = entryDateToKey(csvEntries[i].dateStr);
+            if (k0 && byKey[k0]) throw new Error('Duplicate logbook entry for date ' + k0);
+            byKey[k0] = csvEntries[i];
+        }
+        for (var j = 0; j < csvEntries.length; j++) {
+            var e = csvEntries[j];
+            var key = entryDateToKey(e.dateStr);
+            if (key) byKey[key] = e;
+        }
+        // Gap fill: undefined dates BETWEEN two consecutive records (any
+        // kind) default to OFF. No tail rule — a mid-month partial write
+        // (records just end) leaves later weekdays alone unless explicitly
+        // listed (ponytail: bounded-by-next-record, per spec).
+        var recs = [];
+        for (var k = 0; k < csvEntries.length; k++) {
+            var ok1 = entryDateToKey(csvEntries[k].dateStr);
+            if (ok1) recs.push(ok1);
+        }
+        recs.sort();
+        var gapDates = {};
+        for (var g = 0; g + 1 < recs.length; g++) {
+            var am = recs[g].match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            var bm = recs[g + 1].match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!am || !bm) continue; // cross-month/invalid neighbors: no gap fill
+            var a = new Date(Date.UTC(+am[1], +am[2] - 1, +am[3]));
+            var b = new Date(Date.UTC(+bm[1], +bm[2] - 1, +bm[3]));
+            for (var d = new Date(a.getTime() + 864e5); d < b; d.setUTCDate(d.getUTCDate() + 1)) {
+                gapDates[d.getUTCFullYear() + '-' +
+                    String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getUTCDate()).padStart(2, '0')] = true;
+            }
+        }
+
+        var plan = [];
+        for (var r = 0; r < apiEntries.length; r++) {
+            var row = apiEntries[r];
+            var dateKey = apiDateToKey(row.date);
+            if (!dateKey) { plan.push({ action: 'skip', dateKey: '?', reason: 'unparseable date' }); continue; }
+            if (row.acceptanceID === 1 || row.acceptanceID === 3 || row.acceptanceID === 4)
+                { plan.push({ action: 'skip', dateKey: dateKey, reason: 'accepted' }); continue; }
+            var dow = getDayOfWeek(row.date);
+            if (dow === 0) { plan.push({ action: 'skip', dateKey: dateKey, reason: 'sunday' }); continue; }
+            if (dow === 6) { plan.push({ action: 'off', dateKey: dateKey, reason: 'saturday', id: row.id, date: row.date }); continue; }
+
+            var e2 = byKey[dateKey];
+            if (e2 && !e2.explicitOff)
+                plan.push({ action: 'fill', dateKey: dateKey, id: row.id, date: row.date,
+                    clockIn: e2.clockIn, clockOut: e2.clockOut,
+                    activity: e2.activity || '', description: e2.description || '' });
+            else if (e2 || gapDates[dateKey])
+                plan.push({ action: 'off', dateKey: dateKey, reason: e2 ? 'explicit OFF' : 'gap', id: row.id, date: row.date });
+            else
+                plan.push({ action: 'skip', dateKey: dateKey, reason: 'no entry' });
+        }
+        return plan;
     }
 
     // ─── API Helpers ────────────────────────────────────────────
@@ -410,8 +615,10 @@
     } else {
         window.__LBU = {
             parseCSVRows: parseCSVRows, parseCSV: parseCSV,
-            csvDateToKey: csvDateToKey, apiDateToKey: apiDateToKey,
-            getDayOfWeek: getDayOfWeek, padClockTime: padClockTime,
+            parseYAML: parseYAML, yamlToEntries: yamlToEntries,
+            csvDateToKey: csvDateToKey, entryDateToKey: entryDateToKey,
+            apiDateToKey: apiDateToKey, getDayOfWeek: getDayOfWeek,
+            padClockTime: padClockTime, planUploads: planUploads,
         };
     }
 

@@ -98,20 +98,8 @@
     }
 
     // ─── Single-pass CSV Parser ──────────────────────────────
-    function parseCSV(text) {
-        var rows = [], row = [], field = '';
-        var inQ = false, hasData = false;
-        function pushF() { row.push(field); if (field.trim()) hasData = true; field = ''; }
-        function pushR() { pushF(); if (hasData && row.length) rows.push(row); row = []; hasData = false; }
-        for (var i = 0; i < text.length; i++) {
-            var c = text[i];
-            if (c === '\"') { inQ = !inQ; continue; }
-            if (c === '\r') continue;
-            if (c === '\n' && !inQ) { pushR(); continue; }
-            if (c === ',' && !inQ) { pushF(); continue; }
-            field += c;
-        }
-        if (field || row.length) pushR();
+    // ponytail: exported for tests only; test harness stubs window.document
+    function parseCSVRows(rows) {
         if (rows.length < 2) return [];
         var hdr = rows[0];
         var ci = {
@@ -137,6 +125,26 @@
             });
         }
         return out;
+    }
+
+    var CSV_TEXT = [];
+    function parseCSV(text) {
+        CSV_TEXT = [];
+        var rows = [], row = [], field = '';
+        var inQ = false, hasData = false;
+        function pushF() { row.push(field); if (field.trim()) hasData = true; field = ''; }
+        function pushR() { pushF(); if (hasData && row.length) { rows.push(row), CSV_TEXT.push(row); } row = []; hasData = false; }
+        for (var i = 0; i < text.length; i++) {
+            var c = text[i];
+            if (c === '"') { inQ = !inQ; continue; }
+            if (c === '\r') continue;
+            if (c === '\n' && !inQ) { pushR(); continue; }
+            if (c === ',' && !inQ) { pushF(); continue; }
+            field += c;
+        }
+        if (field || row.length) pushR();
+        window.__lbuCSVRows = CSV_TEXT;
+        return parseCSVRows(rows);
     }
 
     // ─── Date Helpers ───────────────────────────────────────────
@@ -392,10 +400,19 @@
     }
 
     // ─── Start ──────────────────────────────────────────────────
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+    // ponytail: test seam — node harness passes a sandbox and skips boot
+    if (typeof window.__LBU_TEST__ === 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     } else {
-        init();
+        window.__LBU = {
+            parseCSVRows: parseCSVRows, parseCSV: parseCSV,
+            csvDateToKey: csvDateToKey, apiDateToKey: apiDateToKey,
+            getDayOfWeek: getDayOfWeek, padClockTime: padClockTime,
+        };
     }
 
 })();

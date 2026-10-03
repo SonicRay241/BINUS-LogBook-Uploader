@@ -1,6 +1,6 @@
 # BINUS Logbook Uploader
 
-A Firefox extension that automatically fills your daily logbook entries on the BINUS
+A browser extension (Firefox + Chrome) that automatically fills your daily logbook entries on the BINUS
 Activity Enrichment system from a CSV file.
 
 ## How It Works
@@ -20,16 +20,20 @@ Activity Enrichment system from a CSV file.
 - ✅ Shows real-time progress and a summary when done
 
 ## Installation (Firefox)
-
-### Temporary
 1. Open Firefox → `about:debugging#/runtime/this-firefox`
 2. Click **"Load Temporary Add-on"**
 3. Select `extension/manifest.json`
 4. Active until you restart Firefox
 
 ### Permanent
-2. Firefox → `about:addons` → gear icon → **"Install Add-on From File"**
-3. Select the `.xpi` file
+1. Firefox → `about:addons` → gear icon → **"Install Add-on From File"**
+2. Select the `.xpi` file
+
+## Installation (Chrome)
+1. Run `./package.sh` (produces `chrome/binus-logbook-uploader.zip`), then unzip it — Chrome rejects raw symlinked dirs for packing
+2. Chrome → `chrome://extensions` → enable **Developer mode**
+3. **Load unpacked** → select the unzipped folder (`chrome/` works too while links are intact)
+4. For distribution, zip the unzipped folder contents and upload via the [Chrome Web Store](https://chrome.google.com/webstore/devconsole)
 
 ## CSV Format
 
@@ -47,6 +51,7 @@ Here's an [example file](https://docs.google.com/spreadsheets/d/1fTe0RsihOgQycQU
 
 ## Notes
 
+- **Project layout:** `shared/content.js` + `shared/icon.svg` are the single source of truth; `firefox/extension/` and `chrome/` hold only browser-specific manifests (and Chrome PNG icons) and symlink the shared files. `./package.sh` builds the `.xpi` and the Chrome `.zip`.
 - Only activates on `activity-enrichment.apps.binus.ac.id/LearningPlan/StudentIndex`
 - **You must be on the Log Book tab** (the button warns you otherwise)
 - Do not navigate away while the upload is running

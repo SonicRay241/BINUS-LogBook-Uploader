@@ -85,6 +85,51 @@ check('yaml inline seq item map', api.parseYAML('logbook:\n  - date: 2026-10-05\
   [{ date: '2026-10-05', activity: 'A' }]);
 check('yaml number unquoted date kept as string', api.parseYAML('a: 2026-10-05').a, '2026-10-05');
 
+// ── block scalars (sept.yaml format: description: >) ──
+check('folded joins lines with spaces',
+  api.parseYAML('a: >\n  line one\n  line two\n').a, 'line one line two\n');
+check('folded blank line becomes single newline',
+  api.parseYAML('a: >\n  one\n\n  two\n').a, 'one\ntwo\n');
+check('folded strip chomp drops trailing newline',
+  api.parseYAML('a: >-\n  one\n  two\n').a, 'one one'.replace('one one', 'one two'));
+check('folded two blank lines two newlines',
+  api.parseYAML('a: >\n  one\n\n\n  two\n').a, 'one\n\ntwo\n');
+check('literal preserves internal newlines',
+  api.parseYAML('a: |\n  one\n  two\n').a, 'one\ntwo\n');
+check('literal blank lines preserved',
+  api.parseYAML('a: |\n  one\n\n  two\n').a, 'one\n\ntwo\n');
+check('more-indented line kept literal with extra indent',
+  api.parseYAML('a: >\n  normal\n    deep here\n  normal2\n').a, 'normal\n  deep here\nnormal2\n');
+check('block content hash not a comment',
+  api.parseYAML('a: >\n  text # not a comment\n').a, 'text # not a comment\n');
+check('empty block scalar', api.parseYAML('a: >\nb: 2\n').a, '');
+check('block then sibling key', api.parseYAML('defaults:\n  a: >\n    x\n    y\n  b: 3\n').defaults,
+  { a: 'x y\n', b: 3 });
+check('seq item with folded desc',
+  api.parseYAML('log:\n  - d: 1\n    desc: >\n      para one\n      more\n  - d: 2\n').log,
+  [{ d: 1, desc: 'para one more\n' }, { d: 2 }]);
+
+// sept.yaml shape end-to-end (defaults apply, folded description, no quotes)
+const sept = api.yamlToEntries([
+  'defaults:',
+  "  clock-in: '9:00 AM'",
+  "  clock-out: '6:00 PM'",
+  'logbook:',
+  '  - date: 2026-09-01',
+  '    activity: Creating initial code',
+  '    description: >',
+  '      Started with reading documentation,',
+  '      then started testing locally.',
+  '',
+  '      Second paragraph.',
+].join('\n'));
+check('sept-style entry', sept[0], {
+  dateStr: '2026-09-01', clockIn: '9:00 AM', clockOut: '6:00 PM',
+  activity: 'Creating initial code',
+  description: 'Started with reading documentation, then started testing locally.\nSecond paragraph.',
+  explicitOff: false,
+});
+
 // ── yamlToEntries normalization ──
 const ye = api.yamlToEntries([
   'defaults:',

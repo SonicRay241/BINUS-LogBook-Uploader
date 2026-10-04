@@ -201,20 +201,82 @@
     }
 
     function parseYAML(text) {
-        var lines = [];
+        var lines = [], p = 0;
         var rawLines = String(text).split(/\r?\n/);
         for (var li = 0; li < rawLines.length; li++) {
             var rawLine = rawLines[li].replace(/\t/g, '    ');
-            var indent = rawLine.length - rawLine.replace(/^ +/, '').length;
             var txt = stripComment(rawLine);
-            if (!txt || txt === '---' || txt === '...') continue;
-            lines.push({ indent: indent, text: txt });
+            if (!txt || txt === '---' || txt === '...') {
+                lines.push({ indent: -1, raw: '', text: '' }); // struct-invisible
+                continue;
+            }
+            var indent = rawLine.length - rawLine.replace(/^ +/, '').length;
+            lines.push({ indent: indent, raw: rawLine, text: txt });
         }
-        var p = 0;
         function fail(msg) { throw new Error('YAML parse: ' + msg); }
+        function at(i) { return i < lines.length ? lines[i] : null; }
+        function skipJunk() {
+            while (p < lines.length && (lines[p].indent < 0 || lines[p].text === '')) p++;
+        }
+
+        // Block scalar: '>' folded / '|' literal, optional chomp (-/+) and
+        // explicit indent digits (e.g. >2). ponytail: preserves deeper lines
+        // and blank-line paragraph breaks; no exotic indentation cases.
+        function parseBlockScalar(parentIndent, indicator) {
+            var m = indicator.match(/^([>|])\s*([+-]?\d*)$/);
+            if (!m) fail('bad block indicator: "' + indicator + '"');
+            var literal = m[1] === '|';
+            var flags = m[2] || '';
+            var keep = flags.indexOf('+') >= 0, strip = flags.indexOf('-') >= 0;
+            var digits = flags.replace(/[+-]/g, '');
+            var explicit = digits !== '' ? parseInt(digits, 10) : null;
+
+            var consumed = 0, content = [];
+            for (;;) {
+                var l = at(p + consumed);
+                if (!l) break;
+                if (l.indent < 0 || l.raw.trim() === '') {
+                    content.push({ blank: true, indent: 0, raw: '' });
+                    consumed++;
+                    continue;
+                }
+                if (l.indent <= parentIndent) break;
+                content.push({ blank: false, indent: l.indent, raw: l.raw });
+                consumed++;
+            }
+            var eff = explicit;
+            if (eff == null)
+                for (var i0 = 0; i0 < content.length; i0++)
+                    if (!content[i0].blank) { eff = content[i0].indent; break; }
+            if (eff == null) eff = parentIndent + 2;
+
+            var trailing = 0;
+            while (content.length && content[content.length - 1].blank) { content.pop(); trailing++; }
+
+            var body = '', breaks = 0, prevMore = false;
+            // folding: a run of n line breaks → (n-1) '\n' (1 break → ' ');
+            // breaks touching a more-indented line stay literal '\n'.
+            for (var i = 0; i < content.length; i++) {
+                var c = content[i];
+                if (c.blank) { breaks++; continue; }
+                var more = c.indent > eff;
+                if (body !== '') {
+                    if (literal || prevMore || more) body += new Array(breaks + 1).join('\n');
+                    else if (breaks === 1) body += ' ';
+                    else body += new Array(breaks).join('\n');
+                }
+                body += c.raw.slice(Math.min(eff, c.indent));
+                breaks = 1; prevMore = more;
+            }
+            p += consumed;
+            if (body === '') return '';
+            if (keep) return body + '\n' + new Array(trailing + 1).join('\n');
+            return body + (strip ? '' : '\n');
+        }
 
         function parseNode(indent) {
-            var l = p < lines.length ? lines[p] : null;
+            skipJunk();
+            var l = at(p);
             if (!l || l.indent < indent) return null;
             if (l.indent > indent) fail('unexpected indent: "' + l.text + '"');
             if (l.text === '-' || l.text.slice(0, 2) === '- ') return parseSeq(indent);
@@ -225,21 +287,23 @@
 
         function parseSeq(indent) {
             var arr = [];
-            while (true) {
-                var l = p < lines.length ? lines[p] : null;
+            for (;;) {
+                skipJunk();
+                var l = at(p);
                 if (!l || l.indent < indent) break;
                 if (l.indent > indent) fail('bad indent in sequence: "' + l.text + '"');
                 var t = l.text;
                 if (t !== '-' && t.slice(0, 2) !== '- ') break;
-                var rest = (t === '-' ? '' : t.slice(1)).replace(/^( +)/, '');
+                var rest = t === '-' ? '' : t.slice(1).replace(/^ +/, '');
                 p++;
                 if (rest) {
                     // `- key: v` → item is a map whose keys align right after the dash
                     var itemIndent = indent + (t.length - rest.length);
-                    lines.splice(p, 0, { indent: itemIndent, text: rest });
+                    lines.splice(p, 0, { indent: itemIndent, raw: rest, text: rest });
                     arr.push(parseNode(itemIndent));
                 } else {
-                    var n = p < lines.length ? lines[p] : null;
+                    skipJunk();
+                    var n = at(p);
                     arr.push(n && n.indent > indent ? parseNode(n.indent) : null);
                 }
             }
@@ -248,22 +312,32 @@
 
         function parseMap(indent) {
             var obj = {};
-            while (true) {
-                var l = p < lines.length ? lines[p] : null;
+            for (;;) {
+                skipJunk();
+                var l = at(p);
                 if (!l || l.indent < indent) break;
                 if (l.indent > indent) fail('bad indent in mapping: "' + l.text + '"');
                 var kv = splitKey(l.text);
                 if (!kv) fail('expected "key: value": "' + l.text + '"');
                 p++;
-                if (kv.rest) { obj[kv.key] = scalarValue(kv.rest); continue; }
-                var n = p < lines.length ? lines[p] : null;
+                if (kv.rest) {
+                    if (kv.rest === '>' || kv.rest === '|' || /^[>|]\s*[+-]?\d*$/.test(kv.rest))
+                        obj[kv.key] = parseBlockScalar(indent, kv.rest);
+                    else
+                        obj[kv.key] = scalarValue(kv.rest);
+                    continue;
+                }
+                skipJunk();
+                var n = at(p);
                 obj[kv.key] = n && n.indent > indent ? parseNode(n.indent) : null;
             }
             return obj;
         }
 
         if (!lines.length) return null;
-        return parseNode(lines[0].indent);
+        skipJunk();
+        if (p >= lines.length) return null;
+        return parseNode(lines[p].indent);
     }
 
     // ─── YAML → normalized entries ──────────────────────────────

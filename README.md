@@ -61,16 +61,22 @@ defaults:
   clock-out: '6:00 PM'
 logbook:
   - date: 2026-10-05
-    activity: 'Refactor project'
-    description: 'Starting out the day with ....'
+    activity: Refactor project
+    description: >
+      Starting out the day with ....
   - date: 2026-10-06
-    activity: 'Test refactor'
-    description: 'Doing tests on ....'
+    activity: Test refactor
+    description: >
+      Doing tests on ....
     clock-in: '9:00 AM'
     clock-out: '6:00 PM'
   - date: 2026-10-07
     activity: null # Means "OFF"
 ```
+
+Values may be plain (unquoted) or quoted; multi-line descriptions use folded
+(`>`) block scalars — lines join with spaces, a blank line starts a new
+paragraph, and the content is trimmed. `activity: null` marks a day OFF.
 
 A blank Activity in CSV and `activity: null` in YAML mean the same thing.
 

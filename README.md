@@ -30,7 +30,7 @@ Activity Enrichment system from a CSV file.
 2. Select the `.xpi` file
 
 ## Installation (Chrome)
-1. Run `./package.sh` (produces `chrome/binus-logbook-uploader.zip`), then unzip it — Chrome rejects raw symlinked dirs for packing
+1. Run `scripts/package.sh` (macOS/Linux) or `scripts/package.bat` (Windows, produces `chrome/binus-logbook-uploader.zip`), then unzip it — Chrome rejects raw symlinked dirs for packing
 2. Chrome → `chrome://extensions` → enable **Developer mode**
 3. **Load unpacked** → select the unzipped folder (`chrome/` works too while links are intact)
 4. For distribution, zip the unzipped folder contents and upload via the [Chrome Web Store](https://chrome.google.com/webstore/devconsole)
@@ -85,7 +85,7 @@ A blank Activity in CSV and `activity: null` in YAML mean the same thing.
 
 ## Notes
 
-- **Project layout:** `shared/content.js` + `shared/icon.svg` are the single source of truth; `firefox/extension/` and `chrome/` hold only browser-specific manifests (and Chrome PNG icons) and symlink the shared files. `./package.sh` builds the `.xpi` and the Chrome `.zip`.
+- **Project layout:** `shared/content.js` + `shared/icon.svg` are the single source of truth; `firefox/extension/` and `chrome/` hold only browser-specific manifests (and Chrome PNG icons) and symlink the shared files. `scripts/package.sh` (macOS/Linux) or `scripts/package.bat` (Windows) builds the `.xpi` and the Chrome `.zip`.
 - Only activates on `activity-enrichment.apps.binus.ac.id/LearningPlan/StudentIndex`
 - **You must be on the Log Book tab** (the button warns you otherwise)
 - Do not navigate away while the upload is running

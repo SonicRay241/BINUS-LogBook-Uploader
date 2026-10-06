@@ -5,8 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 rm -f firefox/binus-logbook-uploader.xpi chrome/binus-logbook-uploader.zip
-(cd firefox/extension && zip -q -r ../../firefox/binus-logbook-uploader.xpi .)
-(cd chrome && zip -q -r ../chrome/binus-logbook-uploader.zip . -x '*.DS_Store')
+(cd firefox/extension && zip -q -r ../../dist/firefox/binus-logbook-uploader.xpi .)
+(cd chrome && zip -q -r ../dist/chrome/binus-logbook-uploader.zip . -x '*.DS_Store')
 echo "firefox/binus-logbook-uploader.xpi:"
 unzip -l firefox/binus-logbook-uploader.xpi
 echo "chrome/binus-logbook-uploader.zip:"

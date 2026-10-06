@@ -4,8 +4,8 @@ rem   firefox\ -> .xpi | chrome\ -> .zip  (PowerShell Compress-Archive, Win10+)
 setlocal
 cd /d "%~dp0\.."
 
-set "XPI=firefox\binus-logbook-uploader.xpi"
-set "ZIP=chrome\binus-logbook-uploader.zip"
+set "XPI=dist\firefox\binus-logbook-uploader.xpi"
+set "ZIP=dist\chrome\binus-logbook-uploader.zip"
 
 if exist "%XPI%" del "%XPI%"
 if exist "%ZIP%" del "%ZIP%"
